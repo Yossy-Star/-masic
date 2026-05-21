@@ -1,0 +1,1434 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width,
+               initial-scale=1.0,
+               maximum-scale=1.0,
+               user-scalable=no">
+
+<title>Z Magic POV</title>
+
+<style>
+
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+html,body{
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:#000;
+}
+
+/* =========================
+   camera
+========================= */
+
+#camera-video{
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100vh;
+  object-fit:cover;
+  z-index:0;
+}
+
+/* =========================
+   canvas
+========================= */
+
+#fx-canvas{
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100vh;
+  z-index:1;
+  pointer-events:none;
+}
+
+/* =========================
+   buttons
+========================= */
+
+.ctrl-btn{
+
+  position:fixed;
+
+  z-index:10000;
+
+  width:54px;
+  height:54px;
+
+  border:none;
+  border-radius:14px;
+
+  background:
+    rgba(0,0,0,0.55);
+
+  color:#fff;
+
+  font-size:24px;
+
+  backdrop-filter:blur(8px);
+
+  cursor:pointer;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+}
+
+#ss-btn{
+  left:10px;
+  bottom:10px;
+}
+
+#rec-btn{
+  left:74px;
+  bottom:10px;
+}
+
+#full-btn{
+  right:10px;
+  top:10px;
+}
+
+#rec-btn.recording{
+
+  background:
+    rgba(180,0,0,0.8);
+
+  animation:
+    recPulse 1s infinite;
+
+}
+
+@keyframes recPulse{
+
+  0%,100%{
+    transform:scale(1);
+  }
+
+  50%{
+    transform:scale(1.08);
+  }
+
+}
+
+/* =========================
+   log
+========================= */
+
+#log{
+
+  position:fixed;
+
+  left:0;
+  bottom:0;
+
+  width:100%;
+
+  max-height:32vh;
+
+  overflow:auto;
+
+  background:
+    rgba(0,0,0,0.5);
+
+  color:#88ffcc;
+
+  font-size:12px;
+
+  font-family:monospace;
+
+  padding:10px;
+
+  z-index:9999;
+
+  pointer-events:none;
+
+}
+
+/* =========================
+   countdown
+========================= */
+
+#countdown{
+
+  position:fixed;
+  inset:0;
+
+  display:none;
+
+  align-items:center;
+  justify-content:center;
+
+  z-index:30000;
+
+  color:#fff;
+
+  font-size:140px;
+
+  font-weight:900;
+
+  font-family:monospace;
+
+  text-shadow:
+    0 0 30px #000;
+
+}
+
+#countdown.active{
+  display:flex;
+}
+
+/* =========================
+   flash
+========================= */
+
+#flash{
+
+  position:fixed;
+  inset:0;
+
+  background:#fff;
+
+  opacity:0;
+
+  pointer-events:none;
+
+  z-index:40000;
+
+}
+
+</style>
+</head>
+
+<body>
+
+<video
+  id="camera-video"
+  autoplay
+  playsinline
+  muted>
+</video>
+
+<canvas id="fx-canvas"></canvas>
+
+<button id="ss-btn" class="ctrl-btn">
+📷
+</button>
+
+<button id="rec-btn" class="ctrl-btn">
+🎥
+</button>
+
+<button id="full-btn" class="ctrl-btn">
+⛶
+</button>
+
+<div id="log"></div>
+
+<div id="countdown">
+3
+</div>
+
+<div id="flash"></div>
+
+<script>
+
+/* =========================================================
+   log
+========================================================= */
+
+const logEl =
+  document.getElementById("log");
+
+function log(msg,color){
+
+  const div =
+    document.createElement("div");
+
+  div.textContent =
+    "[" +
+    new Date()
+      .toTimeString()
+      .slice(0,8)
+    + "] " +
+    msg;
+
+  div.style.color =
+    color || "#88ffcc";
+
+  logEl.appendChild(div);
+
+  logEl.scrollTop =
+    logEl.scrollHeight;
+
+  console.log(msg);
+
+}
+
+/* =========================================================
+   camera
+========================================================= */
+
+const video =
+  document.getElementById(
+    "camera-video"
+  );
+
+navigator.mediaDevices
+.getUserMedia({
+
+  video:{
+    facingMode:"environment"
+  },
+
+  audio:false
+
+})
+.then(stream=>{
+
+  video.srcObject = stream;
+
+  log(
+    "camera started",
+    "#88ffcc"
+  );
+
+})
+.catch(err=>{
+
+  log(
+    "camera error: " +
+    err.message,
+    "#ff5555"
+  );
+
+});
+
+/* =========================================================
+   canvas
+========================================================= */
+
+const canvas =
+  document.getElementById(
+    "fx-canvas"
+  );
+
+const ctx =
+  canvas.getContext("2d");
+
+function resizeCanvas(){
+
+  canvas.width =
+    window.innerWidth;
+
+  canvas.height =
+    window.innerHeight;
+
+}
+
+resizeCanvas();
+
+window.addEventListener(
+  "resize",
+  resizeCanvas
+);
+
+/* =========================================================
+   state
+========================================================= */
+
+let gestureStep = 0;
+
+let lastInputTime = 0;
+
+const STEP_TIMEOUT = 2200;
+
+let particles = [];
+
+let magicLines = [];
+
+let fireballs = [];
+
+let explosions = [];
+
+/* =========================================================
+   add line
+========================================================= */
+
+function addMagicLine(
+  x1,y1,
+  x2,y2
+){
+
+  magicLines.push({
+
+    x1,
+    y1,
+    x2,
+    y2,
+
+    progress:0,
+
+    speed:0.003,
+
+    done:false
+
+  });
+
+}
+
+/* =========================================================
+   create z
+========================================================= */
+
+function createZStep(step){
+
+  const W = canvas.width;
+  const H = canvas.height;
+
+  const leftX   = W * 0.28;
+  const rightX  = W * 0.72;
+
+  const topY    = H * 0.34;
+  const bottomY = H * 0.66;
+
+  if(step===1){
+
+    addMagicLine(
+      leftX,
+      topY,
+      rightX,
+      topY
+    );
+
+  }
+
+  else if(step===2){
+
+    addMagicLine(
+      rightX,
+      topY,
+      leftX,
+      bottomY
+    );
+
+  }
+
+  else if(step===3){
+
+    addMagicLine(
+      leftX,
+      bottomY,
+      rightX,
+      bottomY
+    );
+
+  }
+
+}
+
+/* =========================================================
+   particles
+========================================================= */
+
+function spawnParticles(x,y){
+
+  for(let i=0;i<18;i++){
+
+    const angle =
+      Math.random() *
+      Math.PI * 2;
+
+    const speed =
+      2 +
+      Math.random() * 9;
+
+    particles.push({
+
+      x,
+      y,
+
+      vx:
+        Math.cos(angle) *
+        speed,
+
+      vy:
+        Math.sin(angle) *
+        speed,
+
+      size:
+        1 +
+        Math.random() * 3,
+
+      life:1
+
+    });
+
+  }
+
+}
+
+/* =========================================================
+   flash
+========================================================= */
+
+function flashScreen(){
+
+  const flash =
+    document.getElementById(
+      "flash"
+    );
+
+  flash.style.transition =
+    "none";
+
+  flash.style.opacity =
+    "0.95";
+
+  requestAnimationFrame(()=>{
+
+    flash.style.transition =
+      "opacity 0.35s";
+
+    flash.style.opacity =
+      "0";
+
+  });
+
+}
+
+/* =========================================================
+   fireball
+========================================================= */
+
+function createFireball(){
+
+  fireballs.push({
+
+    x:
+      canvas.width * 0.5,
+
+    y:
+      canvas.height * 0.55,
+
+    z:0,
+
+    vz:20,
+
+    radius:24
+
+  });
+
+}
+
+/* =========================================================
+   explosion
+========================================================= */
+
+function createExplosion(x,y){
+
+  for(let i=0;i<160;i++){
+
+    const angle =
+      Math.random() *
+      Math.PI * 2;
+
+    const speed =
+      4 +
+      Math.random() * 20;
+
+    explosions.push({
+
+      x,
+      y,
+
+      vx:
+        Math.cos(angle) *
+        speed,
+
+      vy:
+        Math.sin(angle) *
+        speed,
+
+      size:
+        2 +
+        Math.random() * 5,
+
+      life:1
+
+    });
+
+  }
+
+  flashScreen();
+
+}
+
+/* =========================================================
+   complete magic
+========================================================= */
+
+function completeMagic(){
+
+  log(
+    "Z MAGIC COMPLETE",
+    "#88ddff"
+  );
+
+  createFireball();
+
+}
+
+/* =========================================================
+   motion detect
+========================================================= */
+
+function handleMotion(e){
+
+  const now = Date.now();
+
+  if(
+    gestureStep !== 0 &&
+    now - lastInputTime >
+    STEP_TIMEOUT
+  ){
+
+    gestureStep = 0;
+
+    magicLines = [];
+
+    log(
+      "timeout",
+      "#ffaa44"
+    );
+
+  }
+
+  const acc =
+    e.accelerationIncludingGravity;
+
+  if(!acc) return;
+
+  const x = acc.x || 0;
+  const y = acc.y || 0;
+
+  /* =====================
+     STEP1 →
+  ===================== */
+
+  if(gestureStep===0){
+
+    if(
+      x > 12 &&
+      Math.abs(x) >
+      Math.abs(y)
+    ){
+
+      gestureStep = 1;
+
+      lastInputTime = now;
+
+      createZStep(1);
+
+      log(
+        "STEP1 →",
+        "#88ddff"
+      );
+
+    }
+
+  }
+
+  /* =====================
+     STEP2 ↙
+  ===================== */
+
+  else if(gestureStep===1){
+
+    if(
+      x < -10 &&
+      y > 10
+    ){
+
+      gestureStep = 2;
+
+      lastInputTime = now;
+
+      createZStep(2);
+
+      log(
+        "STEP2 ↙",
+        "#88ddff"
+      );
+
+    }
+
+  }
+
+  /* =====================
+     STEP3 →
+  ===================== */
+
+  else if(gestureStep===2){
+
+    if(
+      x > 12 &&
+      Math.abs(x) >
+      Math.abs(y)
+    ){
+
+      gestureStep = 3;
+
+      lastInputTime = now;
+
+      createZStep(3);
+
+      log(
+        "STEP3 →",
+        "#88ddff"
+      );
+
+      completeMagic();
+
+    }
+
+  }
+
+}
+
+/* =========================================================
+   permission
+========================================================= */
+
+function requestMotionPermission(){
+
+  if(
+    typeof DeviceMotionEvent !==
+    "undefined" &&
+
+    typeof
+    DeviceMotionEvent
+    .requestPermission ===
+    "function"
+  ){
+
+    DeviceMotionEvent
+    .requestPermission()
+
+    .then(state=>{
+
+      if(state==="granted"){
+
+        window.addEventListener(
+          "devicemotion",
+          handleMotion
+        );
+
+        log(
+          "motion granted",
+          "#88ffcc"
+        );
+
+      }
+
+    })
+
+    .catch(err=>{
+
+      log(
+        "motion error: " +
+        err.message,
+        "#ff5555"
+      );
+
+    });
+
+  }
+
+  else{
+
+    window.addEventListener(
+      "devicemotion",
+      handleMotion
+    );
+
+    log(
+      "motion registered",
+      "#88ffcc"
+    );
+
+  }
+
+}
+
+let requested = false;
+
+document.addEventListener(
+  "touchstart",
+  ()=>{
+
+    if(!requested){
+
+      requested = true;
+
+      requestMotionPermission();
+
+    }
+
+  },
+  {passive:true}
+);
+
+/* =========================================================
+   draw
+========================================================= */
+
+function draw(){
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  /* =====================
+     lines
+  ===================== */
+
+  for(const line of magicLines){
+
+    if(!line.done){
+
+      line.speed *= 1.12;
+
+      line.progress +=
+        line.speed;
+
+      if(line.progress >= 1){
+
+        line.progress = 1;
+
+        line.done = true;
+
+      }
+
+    }
+
+    const x =
+      line.x1 +
+      (line.x2 - line.x1) *
+      line.progress;
+
+    const y =
+      line.y1 +
+      (line.y2 - line.y1) *
+      line.progress;
+
+    spawnParticles(x,y);
+
+    /* outer glow */
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      line.x1,
+      line.y1
+    );
+
+    ctx.lineTo(x,y);
+
+    ctx.strokeStyle =
+      "rgba(120,220,255,0.08)";
+
+    ctx.lineWidth = 36;
+
+    ctx.lineCap = "round";
+
+    ctx.stroke();
+
+    /* middle */
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      line.x1,
+      line.y1
+    );
+
+    ctx.lineTo(x,y);
+
+    ctx.strokeStyle =
+      "rgba(120,220,255,0.22)";
+
+    ctx.lineWidth = 18;
+
+    ctx.lineCap = "round";
+
+    ctx.stroke();
+
+    /* inner */
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      line.x1,
+      line.y1
+    );
+
+    ctx.lineTo(x,y);
+
+    ctx.strokeStyle =
+      "rgba(180,240,255,0.8)";
+
+    ctx.lineWidth = 8;
+
+    ctx.lineCap = "round";
+
+    ctx.stroke();
+
+    /* core */
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      line.x1,
+      line.y1
+    );
+
+    ctx.lineTo(x,y);
+
+    ctx.strokeStyle =
+      "#ffffff";
+
+    ctx.lineWidth = 3;
+
+    ctx.lineCap = "round";
+
+    ctx.stroke();
+
+  }
+
+  /* =====================
+     particles
+  ===================== */
+
+  for(
+    let i = particles.length - 1;
+    i >= 0;
+    i--
+  ){
+
+    const p =
+      particles[i];
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    p.vx *= 0.95;
+    p.vy *= 0.95;
+
+    p.life -= 0.03;
+
+    if(p.life <= 0){
+
+      particles.splice(i,1);
+
+      continue;
+
+    }
+
+    ctx.save();
+
+    ctx.translate(
+      p.x,
+      p.y
+    );
+
+    ctx.rotate(
+      Math.atan2(
+        p.vy,
+        p.vx
+      )
+    );
+
+    ctx.globalAlpha =
+      p.life;
+
+    ctx.fillStyle =
+      "rgba(180,240,255,0.95)";
+
+    ctx.shadowColor =
+      "rgba(120,220,255,1)";
+
+    ctx.shadowBlur = 16;
+
+    ctx.fillRect(
+      -p.size * 2,
+      -p.size * 0.4,
+      p.size * 4,
+      p.size * 0.8
+    );
+
+    ctx.restore();
+
+  }
+
+  /* =====================
+     fireball
+  ===================== */
+
+  for(
+    let i = fireballs.length - 1;
+    i >= 0;
+    i--
+  ){
+
+    const f =
+      fireballs[i];
+
+    f.z += f.vz;
+
+    f.radius *= 0.986;
+
+    spawnParticles(
+      f.x,
+      f.y
+    );
+
+    const grad =
+      ctx.createRadialGradient(
+        f.x,
+        f.y,
+        0,
+        f.x,
+        f.y,
+        f.radius
+      );
+
+    grad.addColorStop(
+      0,
+      "rgba(255,255,255,1)"
+    );
+
+    grad.addColorStop(
+      0.25,
+      "rgba(120,220,255,0.95)"
+    );
+
+    grad.addColorStop(
+      1,
+      "rgba(120,220,255,0)"
+    );
+
+    ctx.beginPath();
+
+    ctx.fillStyle =
+      grad;
+
+    ctx.arc(
+      f.x,
+      f.y,
+      f.radius,
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fill();
+
+    if(f.z > 900){
+
+      createExplosion(
+        f.x,
+        f.y
+      );
+
+      fireballs.splice(i,1);
+
+      magicLines = [];
+
+      gestureStep = 0;
+
+    }
+
+  }
+
+  /* =====================
+     explosion
+  ===================== */
+
+  for(
+    let i = explosions.length - 1;
+    i >= 0;
+    i--
+  ){
+
+    const e =
+      explosions[i];
+
+    e.x += e.vx;
+    e.y += e.vy;
+
+    e.vx *= 0.96;
+    e.vy *= 0.96;
+
+    e.life -= 0.018;
+
+    if(e.life <= 0){
+
+      explosions.splice(i,1);
+
+      continue;
+
+    }
+
+    ctx.beginPath();
+
+    ctx.fillStyle =
+      "rgba(180,240,255," +
+      e.life +
+      ")";
+
+    ctx.shadowColor =
+      "rgba(120,220,255,1)";
+
+    ctx.shadowBlur = 22;
+
+    ctx.arc(
+      e.x,
+      e.y,
+      e.size,
+      0,
+      Math.PI * 2
+    );
+
+    ctx.fill();
+
+  }
+
+  requestAnimationFrame(draw);
+
+}
+
+draw();
+
+/* =========================================================
+   screenshot
+========================================================= */
+
+const ssBtn =
+  document.getElementById(
+    "ss-btn"
+  );
+
+function nowString(){
+
+  const d = new Date();
+
+  const p =
+    n =>
+    String(n)
+    .padStart(2,"0");
+
+  return (
+    d.getFullYear() +
+    p(d.getMonth()+1) +
+    p(d.getDate()) +
+    "_" +
+    p(d.getHours()) +
+    p(d.getMinutes()) +
+    p(d.getSeconds())
+  );
+
+}
+
+function downloadBlob(
+  blob,
+  filename
+){
+
+  const url =
+    URL.createObjectURL(blob);
+
+  const a =
+    document.createElement("a");
+
+  a.href = url;
+  a.download = filename;
+
+  a.click();
+
+  setTimeout(()=>{
+
+    URL.revokeObjectURL(url);
+
+  },3000);
+
+}
+
+async function captureComposite(){
+
+  return new Promise(resolve=>{
+
+    const comp =
+      document.createElement(
+        "canvas"
+      );
+
+    comp.width =
+      window.innerWidth;
+
+    comp.height =
+      window.innerHeight;
+
+    const c =
+      comp.getContext("2d");
+
+    c.drawImage(
+      video,
+      0,
+      0,
+      comp.width,
+      comp.height
+    );
+
+    c.drawImage(
+      canvas,
+      0,
+      0
+    );
+
+    comp.toBlob(blob=>{
+
+      resolve(blob);
+
+    },"image/png");
+
+  });
+
+}
+
+ssBtn.addEventListener(
+  "click",
+  async()=>{
+
+    const blob =
+      await captureComposite();
+
+    downloadBlob(
+      blob,
+      "ss_" +
+      nowString() +
+      ".png"
+    );
+
+    log(
+      "screenshot saved",
+      "#ffdd55"
+    );
+
+  }
+);
+
+/* =========================================================
+   recording
+========================================================= */
+
+const recBtn =
+  document.getElementById(
+    "rec-btn"
+  );
+
+let isRecording = false;
+
+let mediaRecorder;
+
+let chunks = [];
+
+let recCanvas;
+let recCtx;
+
+let recRAF;
+
+function drawRecording(){
+
+  if(!isRecording) return;
+
+  recCtx.drawImage(
+    video,
+    0,
+    0,
+    recCanvas.width,
+    recCanvas.height
+  );
+
+  recCtx.drawImage(
+    canvas,
+    0,
+    0
+  );
+
+  recRAF =
+    requestAnimationFrame(
+      drawRecording
+    );
+
+}
+
+async function startRecording(){
+
+  recCanvas =
+    document.createElement(
+      "canvas"
+    );
+
+  recCanvas.width =
+    window.innerWidth;
+
+  recCanvas.height =
+    window.innerHeight;
+
+  recCtx =
+    recCanvas.getContext("2d");
+
+  const stream =
+    recCanvas.captureStream(30);
+
+  mediaRecorder =
+    new MediaRecorder(stream);
+
+  chunks = [];
+
+  mediaRecorder.ondataavailable =
+    e=>{
+
+      if(e.data.size>0){
+
+        chunks.push(e.data);
+
+      }
+
+    };
+
+  mediaRecorder.onstop =
+    ()=>{
+
+      const blob =
+        new Blob(chunks,{
+          type:"video/webm"
+        });
+
+      downloadBlob(
+        blob,
+        "video_" +
+        nowString() +
+        ".webm"
+      );
+
+      log(
+        "record saved",
+        "#ffdd55"
+      );
+
+    };
+
+  isRecording = true;
+
+  recBtn.classList.add(
+    "recording"
+  );
+
+  mediaRecorder.start();
+
+  drawRecording();
+
+  log(
+    "record start",
+    "#ff6666"
+  );
+
+}
+
+function stopRecording(){
+
+  isRecording = false;
+
+  cancelAnimationFrame(
+    recRAF
+  );
+
+  mediaRecorder.stop();
+
+  recBtn.classList.remove(
+    "recording"
+  );
+
+  log(
+    "record stop",
+    "#88ffcc"
+  );
+
+}
+
+recBtn.addEventListener(
+  "click",
+  ()=>{
+
+    if(isRecording){
+
+      stopRecording();
+
+    }else{
+
+      startRecording();
+
+    }
+
+  }
+);
+
+/* =========================================================
+   fullscreen
+========================================================= */
+
+const fullBtn =
+  document.getElementById(
+    "full-btn"
+  );
+
+fullBtn.addEventListener(
+  "click",
+  ()=>{
+
+    if(
+      document.fullscreenElement
+    ){
+
+      document.exitFullscreen();
+
+    }
+
+    else{
+
+      document.documentElement
+      .requestFullscreen();
+
+    }
+
+  }
+);
+
+</script>
+</body>
+</html>
