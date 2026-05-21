@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Z Magic POV RED BLACK</title>
+
+<style>
+*{
+  margin:0;
+  padding:0;
+  box-sizing:border-box;
+}
+
+html,body{
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:#000;
+}
+
+#camera-video{
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100vh;
+  object-fit:cover;
+  z-index:0;
+}
+
+#fx-canvas{
+  position:fixed;
+  inset:0;
+  width:100vw;
+  height:100vh;
+  z-index:1;
+  pointer-events:none;
+}
+
+.ctrl-btn{
+  position:fixed;
+  z-index:10000;
+  width:54px;
+  height:54px;
+  border:none;
+  border-radius:14px;
+  background:rgba(0,0,0,0.55);
+  color:#fff;
+  font-size:24px;
+  backdrop-filter:blur(8px);
+  cursor:pointer;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+
+#ss-btn{
+  left:10px;
+  bottom:10px;
+}
+
+#rec-btn{
+  left:74px;
+  bottom:10px;
+}
+
+#full-btn{
+  right:10px;
+  top:10px;
+}
+
+#rec-btn.recording{
+  background:rgba(180,0,0,0.8);
+  animation:recPulse 1s infinite;
+}
+
+@keyframes recPulse{
+  0%,100%{
+    transform:scale(1);
+  }
+  50%{
+    transform:scale(1.08);
+  }
+}
+
+#log{
+  position:fixed;
+  left:0;
+  bottom:0;
+  width:100%;
+  max-height:32vh;
+  overflow:auto;
+  background:rgba(0,0,0,0.5);
+  color:#ff6666;
+  font-size:12px;
+  font-family:monospace;
+  padding:10px;
+  z-index:9999;
+  pointer-events:none;
+}
+
+#flash{
+  position:fixed;
+  inset:0;
+  background:#ff2222;
+  opacity:0;
+  pointer-events:none;
+  z-index:40000;
+}
+</style>
+</head>
+
+<body>
+
+<video id="camera-video" autoplay playsinline muted></video>
+<canvas id="fx-canvas"></canvas>
+
+<button id="ss-btn" class="ctrl-btn">📷</button>
+<button id="rec-btn" class="ctrl-btn">🎥</button>
+<button id="full-btn" class="ctrl-btn">⛶</button>
+
+<div id="log"></div>
+<div id="flash"></div>
+
+<script>
+/* =========================================
+   LOG
+========================================= */
+const logEl = document.getElementById("log");
+
+function log(msg,color){
+  const d=document.createElement("div");
+  d.textContent="["+new Date().toTimeString().slice(0,8)+"] "+msg;
+  d.style.color=color||"#ff6666";
+  logEl.appendChild(d);
+  logEl.scrollTop=logEl.scrollHeight;
+}
+
+/* =========================================
+   CAMERA
+========================================= */
+const video=document.getElementById("camera-video");
+
+navigator.mediaDevices.getUserMedia({
+  video:{
+    facingMode:"environment"
+  },
+  audio:false
+})
+.then(stream=>{
+  video.srcObject=stream;
+  log("camera started","#ff9999");
+})
+.catch(err=>{
+  log("camera error: "+err.message,"#ff4444");
+});
+
+/* =========================================
+   CANVAS
+========================================= */
+const canvas=document.getElementById("fx-canvas");
+const ctx=canvas.getContext("2d");
+
+function resize(){
+  canvas.width=window.innerWidth;
+  canvas.height=window.innerHeight;
+}
+
+resize();
+
+window.addEventListener("resize",resize);
+
+/* =========================================
+   COLORS
+========================================= */
+const RED1 = "255,40,40";
+const RED2 = "180,0,0";
+const RED3 = "255,120,120";
+
+/* =========================================
+   GLOW CIRCLE
+========================================= */
+function drawGlowCircle(x,y,r,a){
+
+  ctx.beginPath();
+  ctx.arc(x,y,r*4,0,Math.PI*2);
+  ctx.fillStyle=`rgba(${RED2},${a*0.12})`;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x,y,r*2,0,Math.PI*2);
+  ctx.fillStyle=`rgba(${RED1},${a*0.3})`;
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(x,y,r,0,Math.PI*2);
+  ctx.fillStyle=`rgba(255,255,255,${a})`;
+  ctx.fill();
+}
+
+/* =========================================
+   MAGIC LINE
+========================================= */
+const LINE_SPEED=0.016;
+const TIP_SPARKS=8;
+
+let magicLines=[];
+
+function makeLine(x1,y1,x2,y2){
+  return{
+    x1,y1,x2,y2,
+    t:0,
+    done:false,
+    sparks:Array.from({length:120},()=>({life:0})),
+    sparkHead:0
+  };
+}
+
+function emitSpark(line,x,y){
+
+  const sp=line.sparks[line.sparkHead % line.sparks.length];
+
+  line.sparkHead++;
+
+  const ang=Math.random()*Math.PI*2;
+  const spd=2+Math.random()*8;
+
+  sp.x=x;
+  sp.y=y;
+
+  sp.vx=Math.cos(ang)*spd;
+  sp.vy=Math.sin(ang)*spd;
+
+  sp.life=0.8+Math.random()*0.5;
+  sp.size=1+Math.random()*2.5;
+}
+
+function updateLine(line){
+
+  if(!line.done){
+    line.t += LINE_SPEED * (1 + line.t * 1.5);
+
+    if(line.t >= 1){
+      line.t = 1;
+      line.done = true;
+    }
+  }
+
+  const tx=line.x1+(line.x2-line.x1)*line.t;
+  const ty=line.y1+(line.y2-line.y1)*line.t;
+
+  for(let i=0;i<TIP_SPARKS;i++){
+    emitSpark(line,tx,ty);
+  }
+
+  function drawPass(w,a,color){
+
+    ctx.beginPath();
+    ctx.moveTo(line.x1,line.y1);
+    ctx.lineTo(tx,ty);
+
+    ctx.lineWidth=w;
+    ctx.lineCap="round";
+    ctx.strokeStyle=color.replace("ALPHA",a);
+
+    ctx.stroke();
+  }
+
+  drawPass(36,"0.05",`rgba(${RED2},ALPHA)`);
+  drawPass(18,"0.18",`rgba(${RED1},ALPHA)`);
+  drawPass(8 ,"0.65",`rgba(${RED1},ALPHA)`);
+
+  ctx.beginPath();
+  ctx.moveTo(line.x1,line.y1);
+  ctx.lineTo(tx,ty);
+  ctx.lineWidth=2;
+  ctx.lineCap="round";
+  ctx.strokeStyle="rgba(255,255,255,0.9)";
+  ctx.stroke();
+
+  drawGlowCircle(tx,ty,7,0.9);
+
+  for(const sp of line.sparks){
+
+    if(sp.life<=0) continue;
+
+    sp.x += sp.vx;
+    sp.y += sp.vy;
+
+    sp.vx *= 0.92;
+    sp.vy *= 0.92;
+
+    sp.life -= 0.045;
+
+    if(sp.life<=0) continue;
+
+    ctx.save();
+
+    ctx.globalAlpha=sp.life;
+
+    ctx.translate(sp.x,sp.y);
+
+    ctx.rotate(Math.atan2(sp.vy,sp.vx));
+
+    ctx.fillStyle=`rgba(${RED3},1)`;
+
+    ctx.fillRect(
+      -sp.size*2.5,
+      -sp.size*0.4,
+      sp.size*5,
+      sp.size*0.8
+    );
+
+    ctx.restore();
+  }
+}
+
+/* =========================================
+   Z GESTURE
+========================================= */
+let gestureStep=0;
+let lastStepTime=0;
+
+const STEP_TIMEOUT=2200;
+
+function createZStep(step){
+
+  const W=canvas.width;
+  const H=canvas.height;
+
+  const lx=W*0.28;
+  const rx=W*0.72;
+
+  const ty=H*0.34;
+  const by=H*0.66;
+
+  if(step===1){
+    magicLines.push(makeLine(lx,ty,rx,ty));
+  }
+
+  if(step===2){
+    magicLines.push(makeLine(rx,ty,lx,by));
+  }
+
+  if(step===3){
+    magicLines.push(makeLine(lx,by,rx,by));
+  }
+}
+
+/* =========================================
+   PROJECTILE
+   前方向へ飛ぶ
+========================================= */
+let projectile=null;
+
+const projectileParticles=[];
+
+function launchProjectile(){
+
+  const W=canvas.width;
+  const H=canvas.height;
+
+  projectile={
+    x:W*0.5,
+    y:H*0.5,
+
+    z:0,
+    speed:26,
+
+    alive:true
+  };
+
+  log("PROJECTILE","#ff9999");
+}
+
+function explodeProjectile(x,y){
+
+  for(let i=0;i<140;i++){
+
+    const a=Math.random()*Math.PI*2;
+    const s=3+Math.random()*18;
+
+    projectileParticles.push({
+      x:x,
+      y:y,
+      vx:Math.cos(a)*s,
+      vy:Math.sin(a)*s,
+      life:1,
+      size:2+Math.random()*5
+    });
+  }
+
+  flashScreen();
+}
+
+function updateProjectile(){
+
+  if(projectile && projectile.alive){
+
+    projectile.z += projectile.speed;
+
+    const scale=1+(projectile.z*0.02);
+
+    const size=16*scale;
+
+    drawGlowCircle(
+      projectile.x,
+      projectile.y,
+      size,
+      1
+    );
+
+    for(let i=0;i<5;i++){
+
+      projectileParticles.push({
+        x:projectile.x+(Math.random()-0.5)*10,
+        y:projectile.y+(Math.random()-0.5)*10,
+        vx:(Math.random()-0.5)*4,
+        vy:(Math.random()-0.5)*4,
+        life:0.7,
+        size:1+Math.random()*2
+      });
+    }
+
+    if(scale>22){
+
+      projectile.alive=false;
+
+      explodeProjectile(
+        projectile.x,
+        projectile.y
+      );
+    }
+  }
+
+  for(let i=projectileParticles.length-1;i>=0;i--){
+
+    const p=projectileParticles[i];
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    p.vx *= 0.95;
+    p.vy *= 0.95;
+
+    p.life -= 0.025;
+
+    if(p.life<=0){
+      projectileParticles.splice(i,1);
+      continue;
+    }
+
+    ctx.save();
+
+    ctx.globalAlpha=p.life;
+
+    ctx.translate(p.x,p.y);
+
+    ctx.rotate(Math.atan2(p.vy,p.vx));
+
+    ctx.fillStyle=`rgba(${RED1},1)`;
+
+    ctx.fillRect(
+      -p.size*3,
+      -p.size*0.45,
+      p.size*6,
+      p.size*0.9
+    );
+
+    ctx.restore();
+  }
+}
+
+/* =========================================
+   COMPLETE MAGIC
+========================================= */
+function completeMagic(){
+
+  log("Z MAGIC COMPLETE","#ff5555");
+
+  launchProjectile();
+}
+
+/* =========================================
+   MOTION
+========================================= */
+function handleMotion(e){
+
+  const now=Date.now();
+
+  if(
+    gestureStep!==0 &&
+    now-lastStepTime>STEP_TIMEOUT
+  ){
+    gestureStep=0;
+    magicLines=[];
+    log("timeout","#ffaa44");
+  }
+
+  const acc=e.accelerationIncludingGravity;
+
+  if(!acc) return;
+
+  const x=acc.x||0;
+  const y=acc.y||0;
+
+  if(
+    gestureStep===0 &&
+    x>12 &&
+    Math.abs(x)>Math.abs(y)
+  ){
+
+    gestureStep=1;
+    lastStepTime=now;
+
+    createZStep(1);
+
+    log("STEP1","#ff6666");
+  }
+
+  else if(
+    gestureStep===1 &&
+    x<-10 &&
+    y>10
+  ){
+
+    gestureStep=2;
+    lastStepTime=now;
+
+    createZStep(2);
+
+    log("STEP2","#ff6666");
+  }
+
+  else if(
+    gestureStep===2 &&
+    x>12 &&
+    Math.abs(x)>Math.abs(y)
+  ){
+
+    gestureStep=3;
+    lastStepTime=now;
+
+    createZStep(3);
+
+    log("STEP3","#ff6666");
+
+    completeMagic();
+  }
+}
+
+function requestMotionPermission(){
+
+  if(
+    typeof DeviceMotionEvent!=="undefined" &&
+    typeof DeviceMotionEvent.requestPermission==="function"
+  ){
+
+    DeviceMotionEvent.requestPermission()
+    .then(state=>{
+
+      if(state==="granted"){
+
+        window.addEventListener(
+          "devicemotion",
+          handleMotion
+        );
+
+        log("motion granted","#ff9999");
+      }
+    })
+    .catch(err=>{
+      log("motion error: "+err.message,"#ff4444");
+    });
+
+  }else{
+
+    window.addEventListener(
+      "devicemotion",
+      handleMotion
+    );
+
+    log("motion registered","#ff9999");
+  }
+}
+
+let requested=false;
+
+document.addEventListener(
+  "touchstart",
+  ()=>{
+
+    if(!requested){
+
+      requested=true;
+
+      requestMotionPermission();
+    }
+  },
+  {passive:true}
+);
+
+requestMotionPermission();
+
+/* =========================================
+   DRAW LOOP
+========================================= */
+function draw(){
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  magicLines=magicLines.filter(line=>{
+
+    if(!line.done) return true;
+
+    return line.sparks.some(
+      sp=>sp.life>0
+    );
+  });
+
+  for(const line of magicLines){
+    updateLine(line);
+  }
+
+  updateProjectile();
+
+  requestAnimationFrame(draw);
+}
+
+draw();
+
+/* =========================================
+   FLASH
+========================================= */
+function flashScreen(){
+
+  const f=document.getElementById("flash");
+
+  f.style.transition="none";
+  f.style.opacity="0.95";
+
+  requestAnimationFrame(()=>{
+
+    f.style.transition="opacity 0.45s";
+    f.style.opacity="0";
+  });
+}
+
+/* =========================================
+   UTIL
+========================================= */
+function nowString(){
+
+  const d=new Date();
+
+  const p=n=>String(n).padStart(2,"0");
+
+  return d.getFullYear()
+    +p(d.getMonth()+1)
+    +p(d.getDate())
+    +"_"
+    +p(d.getHours())
+    +p(d.getMinutes())
+    +p(d.getSeconds());
+}
+
+function downloadBlob(blob,name){
+
+  const u=URL.createObjectURL(blob);
+
+  const a=document.createElement("a");
+
+  a.href=u;
+  a.download=name;
+  a.click();
+
+  setTimeout(()=>{
+    URL.revokeObjectURL(u);
+  },3000);
+}
+
+/* =========================================
+   SCREENSHOT
+========================================= */
+async function captureComposite(){
+
+  return new Promise(resolve=>{
+
+    const comp=document.createElement("canvas");
+
+    comp.width=window.innerWidth;
+    comp.height=window.innerHeight;
+
+    const c=comp.getContext("2d");
+
+    if(video.readyState>=2){
+
+      const vw=video.videoWidth;
+      const vh=video.videoHeight;
+
+      const sc=Math.max(
+        comp.width/vw,
+        comp.height/vh
+      );
+
+      c.drawImage(
+        video,
+        (comp.width-vw*sc)/2,
+        (comp.height-vh*sc)/2,
+        vw*sc,
+        vh*sc
+      );
+    }
+
+    c.drawImage(canvas,0,0);
+
+    comp.toBlob(b=>{
+      resolve(b);
+    },"image/png");
+  });
+}
+
+document.getElementById("ss-btn")
+.addEventListener("click",async()=>{
+
+  const blob=await captureComposite();
+
+  downloadBlob(
+    blob,
+    "ss_"+nowString()+".png"
+  );
+
+  log("screenshot saved","#ffdd55");
+});
+
+/* =========================================
+   RECORDING
+========================================= */
+const recBtn=document.getElementById("rec-btn");
+
+let isRecording=false;
+let mediaRecorder;
+let chunks=[];
+let recCanvas;
+let recCtx;
+let recRAF;
+
+function drawRec(){
+
+  if(!isRecording) return;
+
+  if(video.readyState>=2){
+
+    const vw=video.videoWidth;
+    const vh=video.videoHeight;
+
+    const sc=Math.max(
+      recCanvas.width/vw,
+      recCanvas.height/vh
+    );
+
+    recCtx.drawImage(
+      video,
+      (recCanvas.width-vw*sc)/2,
+      (recCanvas.height-vh*sc)/2,
+      vw*sc,
+      vh*sc
+    );
+  }
+
+  recCtx.drawImage(canvas,0,0);
+
+  recRAF=requestAnimationFrame(drawRec);
+}
+
+async function startRecording(){
+
+  recCanvas=document.createElement("canvas");
+
+  recCanvas.width=window.innerWidth;
+  recCanvas.height=window.innerHeight;
+
+  recCtx=recCanvas.getContext("2d");
+
+  const stream=recCanvas.captureStream(30);
+
+  const mime="video/webm";
+
+  mediaRecorder=new MediaRecorder(
+    stream,
+    {mimeType:mime}
+  );
+
+  chunks=[];
+
+  mediaRecorder.ondataavailable=e=>{
+
+    if(e.data?.size>0){
+      chunks.push(e.data);
+    }
+  };
+
+  mediaRecorder.onstop=()=>{
+
+    const blob=new Blob(
+      chunks,
+      {type:mime}
+    );
+
+    downloadBlob(
+      blob,
+      "video_"+nowString()+".webm"
+    );
+
+    log("record saved","#ffdd55");
+  };
+
+  isRecording=true;
+
+  recBtn.classList.add("recording");
+
+  mediaRecorder.start(200);
+
+  drawRec();
+
+  log("record start","#ff6666");
+}
+
+function stopRecording(){
+
+  isRecording=false;
+
+  cancelAnimationFrame(recRAF);
+
+  if(mediaRecorder?.state!=="inactive"){
+    mediaRecorder.stop();
+  }
+
+  recBtn.classList.remove("recording");
+
+  log("record stop","#ff9999");
+}
+
+recBtn.addEventListener("click",()=>{
+
+  isRecording
+    ? stopRecording()
+    : startRecording();
+});
+
+/* =========================================
+   FULLSCREEN
+========================================= */
+document.getElementById("full-btn")
+.addEventListener("click",()=>{
+
+  if(document.fullscreenElement){
+
+    document.exitFullscreen();
+
+  }else{
+
+    document.documentElement
+    .requestFullscreen()
+    .catch(err=>{
+      log("FS: "+err.message,"#ff4444");
+    });
+  }
+});
+</script>
+
+</body>
+</html>
