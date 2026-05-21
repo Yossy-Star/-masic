@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Z Magic POV</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+#camera-video{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0}
+#fx-canvas{position:fixed;inset:0;width:100vw;height:100vh;z-index:1;pointer-events:none}
+.ctrl-btn{
+  position:fixed;z-index:10000;
+  width:54px;height:54px;
+  border:none;border-radius:14px;
+  background:rgba(0,0,0,0.55);
+  color:#fff;font-size:24px;
+  backdrop-filter:blur(8px);
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+}
+#ss-btn{left:10px;bottom:10px}
+#rec-btn{left:74px;bottom:10px}
+#full-btn{right:10px;top:10px}
+#rec-btn.recording{background:rgba(180,0,0,0.8);animation:recPulse 1s infinite}
+@keyframes recPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+#log{
+  position:fixed;left:0;bottom:0;width:100%;max-height:32vh;overflow:auto;
+  background:rgba(0,0,0,0.5);color:#88ffcc;font-size:12px;
+  font-family:monospace;padding:10px;z-index:9999;pointer-events:none;
+}
+#countdown{
+  position:fixed;inset:0;display:none;
+  align-items:center;justify-content:center;
+  z-index:30000;color:#fff;font-size:140px;font-weight:900;
+  font-family:monospace;text-shadow:0 0 30px #000;
+}
+#countdown.active{display:flex}
+#flash{position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:40000}
+</style>
+</head>
+<body>
+
+<video id="camera-video" autoplay playsinline muted></video>
+<canvas id="fx-canvas"></canvas>
+
+<button id="ss-btn" class="ctrl-btn">📷</button>
+<button id="rec-btn" class="ctrl-btn">🎥</button>
+<button id="full-btn" class="ctrl-btn">⛶</button>
+
+<div id="log"></div>
+<div id="countdown">3</div>
+<div id="flash"></div>
+
+<script>
+/* ── log ── */
+const logEl = document.getElementById("log");
+function log(msg, color){
+  const d = document.createElement("div");
+  d.textContent = "[" + new Date().toTimeString().slice(0,8) + "] " + msg;
+  d.style.color = color || "#88ffcc";
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* ── camera ── */
+const video = document.getElementById("camera-video");
+navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"},audio:false})
+  .then(s => { video.srcObject = s; log("camera started","#88ffcc"); })
+  .catch(e => log("camera error: " + e.message,"#ff5555"));
+
+/* ── canvas ── */
+const canvas = document.getElementById("fx-canvas");
+const ctx    = canvas.getContext("2d");
+
+function resize(){
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener("resize", resize);
+
+/* ════════════════════════════════════════
+   GLOW HELPER – no shadowBlur
+   draw circle twice: large dim halo + small bright core
+════════════════════════════════════════ */
+function drawGlowCircle(x, y, r, alpha, hue){
+  /* halo */
+  ctx.beginPath();
+  ctx.arc(x, y, r * 3, 0, Math.PI*2);
+  ctx.fillStyle = `hsla(${hue},100%,80%,${alpha * 0.18})`;
+  ctx.fill();
+  /* mid */
+  ctx.beginPath();
+  ctx.arc(x, y, r * 1.5, 0, Math.PI*2);
+  ctx.fillStyle = `hsla(${hue},100%,90%,${alpha * 0.45})`;
+  ctx.fill();
+  /* core */
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI*2);
+  ctx.fillStyle = `hsla(${hue},100%,98%,${alpha})`;
+  ctx.fill();
+}
+
+/* ════════════════════════════════════════
+   MAGIC LINE
+   Each line stores its own tip-particles (pool)
+════════════════════════════════════════ */
+const MAGIC_HUE   = 195; /* cyan-blue */
+const MAGIC_HUE2  = 170; /* tip glow */
+const LINE_SPEED  = 0.016; /* per-frame delta (fraction of total length) */
+const TIP_SPARKS  = 5;    /* particles born per frame at tip */
+
+let magicLines = [];
+
+/* Lightweight particle pool per line – no per-frame GC */
+function makeLine(x1,y1,x2,y2){
+  return {
+    x1, y1, x2, y2,
+    t: 0,          /* 0→1 progress */
+    done: false,
+    /* tip spark pool */
+    sparks: Array.from({length: 80}, () => ({life:0})),
+    sparkHead: 0
+  };
+}
+
+function emitSpark(line, tx, ty){
+  const sp = line.sparks[line.sparkHead % line.sparks.length];
+  line.sparkHead++;
+  const a  = Math.random() * Math.PI * 2;
+  const spd = 1 + Math.random() * 4;
+  sp.x  = tx; sp.y = ty;
+  sp.vx = Math.cos(a)*spd; sp.vy = Math.sin(a)*spd;
+  sp.life = 0.8 + Math.random()*0.4;
+  sp.size = 1.2 + Math.random()*1.6;
+}
+
+function updateLine(line){
+  if(!line.done){
+    line.t += LINE_SPEED * (1 + line.t * 1.2); /* ease in */
+    if(line.t >= 1){ line.t = 1; line.done = true; }
+  }
+
+  const tx = line.x1 + (line.x2 - line.x1) * line.t;
+  const ty = line.y1 + (line.y2 - line.y1) * line.t;
+
+  /* emit tip sparks */
+  for(let i=0;i<TIP_SPARKS;i++) emitSpark(line, tx, ty);
+
+  /* draw the drawn portion – three passes, no shadowBlur */
+  const drawSegment = (lw, alpha) => {
+    ctx.beginPath();
+    ctx.moveTo(line.x1, line.y1);
+    ctx.lineTo(tx, ty);
+    ctx.lineWidth = lw;
+    ctx.lineCap   = "round";
+    ctx.strokeStyle = `rgba(180,240,255,${alpha})`;
+    ctx.stroke();
+  };
+  drawSegment(32, 0.04);
+  drawSegment(14, 0.15);
+  drawSegment(6,  0.55);
+  /* white core */
+  ctx.beginPath();
+  ctx.moveTo(line.x1, line.y1);
+  ctx.lineTo(tx, ty);
+  ctx.strokeStyle = "rgba(255,255,255,0.90)";
+  ctx.lineWidth   = 2.5;
+  ctx.lineCap     = "round";
+  ctx.stroke();
+
+  /* tip glow dot */
+  if(!line.done) drawGlowCircle(tx, ty, 5, 0.85, MAGIC_HUE2);
+
+  /* update + draw sparks */
+  for(let i=0;i<line.sparks.length;i++){
+    const sp = line.sparks[i];
+    if(sp.life <= 0) continue;
+    sp.x += sp.vx; sp.y += sp.vy;
+    sp.vx *= 0.92; sp.vy *= 0.92;
+    sp.life -= 0.055;
+    if(sp.life <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = sp.life;
+    ctx.translate(sp.x, sp.y);
+    ctx.rotate(Math.atan2(sp.vy, sp.vx));
+    ctx.fillStyle = `hsl(${MAGIC_HUE},100%,90%)`;
+    ctx.fillRect(-sp.size*2, -sp.size*0.45, sp.size*4, sp.size*0.9);
+    ctx.restore();
+  }
+}
+
+/* ════════════════════════════════════════
+   Z GESTURE
+════════════════════════════════════════ */
+let gestureStep  = 0;
+let lastStepTime = 0;
+const STEP_TIMEOUT = 2200;
+
+function createZStep(step){
+  const W = canvas.width, H = canvas.height;
+  const lx = W*0.28, rx = W*0.72;
+  const ty = H*0.34, by = H*0.66;
+  if(step===1) magicLines.push(makeLine(lx,ty,rx,ty));
+  if(step===2) magicLines.push(makeLine(rx,ty,lx,by));
+  if(step===3) magicLines.push(makeLine(lx,by,rx,by));
+}
+
+/* ════════════════════════════════════════
+   ARC PROJECTILE  –  replaces fireball
+   Launches from Z-center, curves toward camera (grows + brightens),
+   then bursts into a radial ring + scatter
+════════════════════════════════════════ */
+let arc    = null;   /* single active arc */
+let burst  = null;   /* burst state after arc arrives */
+
+/* burst particles pool – fixed size, no GC */
+const BURST_COUNT = 60;
+const burstPool   = Array.from({length:BURST_COUNT}, () => ({life:0}));
+
+function launchArc(){
+  const W = canvas.width, H = canvas.height;
+  arc = {
+    /* start at Z center */
+    x0: W * 0.5, y0: H * 0.5,
+    /* control point: slightly upward */
+    cx: W * 0.5, cy: H * 0.15,
+    /* end: center-bottom = "1 m away toward you" illusion */
+    x1: W * 0.5, y1: H * 1.3,
+    t:  0,
+    speed: 0.018,
+    trail: [],  /* last N tip positions for glow tail */
+  };
+  log("ARC LAUNCHED", "#88ddff");
+}
+
+function quadBezier(t, p0, p1, p2){
+  const it = 1-t;
+  return it*it*p0 + 2*it*t*p1 + t*t*p2;
+}
+
+function triggerBurst(x, y){
+  for(let i=0;i<BURST_COUNT;i++){
+    const sp = burstPool[i];
+    const a  = (i / BURST_COUNT) * Math.PI*2 + Math.random()*0.3;
+    const spd = 5 + Math.random()*14;
+    sp.x  = x; sp.y = y;
+    sp.vx = Math.cos(a)*spd; sp.vy = Math.sin(a)*spd;
+    sp.life = 1.0;
+    sp.size = 2 + Math.random()*4;
+  }
+  burst = { x, y, ring: 0, life: 1.0 };
+  flashScreen();
+  log("BURST", "#ffffff");
+}
+
+function updateArc(){
+  if(!arc) return;
+  arc.t += arc.speed * (0.5 + arc.t * 1.5); /* accelerate toward camera */
+
+  if(arc.t >= 1){
+    const bx = quadBezier(1, arc.x0, arc.cx, arc.x1);
+    const by = quadBezier(1, arc.y0, arc.cy, arc.y1);
+    triggerBurst(bx, by);
+    arc = null;
+    return;
+  }
+
+  const t   = arc.t;
+  const bx  = quadBezier(t, arc.x0, arc.cx, arc.x1);
+  const by  = quadBezier(t, arc.y0, arc.cy, arc.y1);
+  const sz  = 6 + t * 22;       /* grows as it approaches */
+  const alp = 0.6 + t * 0.4;
+
+  /* store trail */
+  arc.trail.push({x:bx, y:by, t});
+  if(arc.trail.length > 18) arc.trail.shift();
+
+  /* draw fading tail */
+  for(let i=1;i<arc.trail.length;i++){
+    const p0 = arc.trail[i-1], p1 = arc.trail[i];
+    const ta  = (i / arc.trail.length);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.strokeStyle = `rgba(180,240,255,${ta * 0.6})`;
+    ctx.lineWidth   = ta * sz * 0.5;
+    ctx.lineCap = "round";
+    ctx.stroke();
+  }
+
+  /* core orb – no shadowBlur */
+  drawGlowCircle(bx, by, sz, alp, MAGIC_HUE);
+}
+
+function updateBurst(){
+  if(!burst) return;
+  burst.ring  += 14;
+  burst.life  -= 0.025;
+  if(burst.life <= 0){ burst = null; /* ring done */ }
+
+  if(burst){
+    /* expanding ring – two circles (halo + edge) */
+    ctx.beginPath();
+    ctx.arc(burst.x, burst.y, burst.ring, 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(180,240,255,${burst.life * 0.35})`;
+    ctx.lineWidth   = 18;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(burst.x, burst.y, burst.ring, 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(255,255,255,${burst.life * 0.65})`;
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  }
+
+  /* scatter particles */
+  for(let i=0;i<BURST_COUNT;i++){
+    const sp = burstPool[i];
+    if(sp.life <= 0) continue;
+    sp.x += sp.vx; sp.y += sp.vy;
+    sp.vx *= 0.94; sp.vy *= 0.94;
+    sp.life -= 0.022;
+    if(sp.life <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = sp.life * sp.life; /* quadratic fade */
+    ctx.translate(sp.x, sp.y);
+    ctx.rotate(Math.atan2(sp.vy, sp.vx));
+    ctx.fillStyle = `hsl(${MAGIC_HUE},100%,92%)`;
+    ctx.fillRect(-sp.size*2.2, -sp.size*0.4, sp.size*4.5, sp.size*0.8);
+    ctx.restore();
+  }
+}
+
+/* ════════════════════════════════════════
+   COMPLETE MAGIC
+════════════════════════════════════════ */
+function completeMagic(){
+  log("Z MAGIC COMPLETE","#88ddff");
+  launchArc();
+}
+
+/* ════════════════════════════════════════
+   MOTION
+════════════════════════════════════════ */
+function handleMotion(e){
+  const now = Date.now();
+  if(gestureStep !== 0 && now - lastStepTime > STEP_TIMEOUT){
+    gestureStep = 0;
+    magicLines  = [];
+    log("timeout","#ffaa44");
+  }
+  const acc = e.accelerationIncludingGravity;
+  if(!acc) return;
+  const x = acc.x||0, y = acc.y||0;
+
+  if(gestureStep===0 && x>12 && Math.abs(x)>Math.abs(y)){
+    gestureStep=1; lastStepTime=now; createZStep(1);
+    log("STEP1 →","#88ddff");
+  } else if(gestureStep===1 && x<-10 && y>10){
+    gestureStep=2; lastStepTime=now; createZStep(2);
+    log("STEP2 ↙","#88ddff");
+  } else if(gestureStep===2 && x>12 && Math.abs(x)>Math.abs(y)){
+    gestureStep=3; lastStepTime=now; createZStep(3);
+    log("STEP3 →","#88ddff");
+    completeMagic();
+  }
+}
+
+function requestMotionPermission(){
+  if(typeof DeviceMotionEvent!=="undefined" && typeof DeviceMotionEvent.requestPermission==="function"){
+    DeviceMotionEvent.requestPermission()
+      .then(s=>{ if(s==="granted"){ window.addEventListener("devicemotion",handleMotion); log("motion granted","#88ffcc"); } })
+      .catch(e=>log("motion error: "+e.message,"#ff5555"));
+  } else {
+    window.addEventListener("devicemotion",handleMotion);
+    log("motion registered","#88ffcc");
+  }
+}
+let requested=false;
+document.addEventListener("touchstart",()=>{
+  if(!requested){ requested=true; requestMotionPermission(); }
+},{passive:true});
+requestMotionPermission();
+
+/* ════════════════════════════════════════
+   MAIN DRAW LOOP
+════════════════════════════════════════ */
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  /* prune fully-done lines whose sparks are all dead */
+  magicLines = magicLines.filter(line => {
+    if(!line.done) return true;
+    return line.sparks.some(sp => sp.life > 0);
+  });
+
+  for(const line of magicLines) updateLine(line);
+  updateArc();
+  updateBurst();
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+/* ════════════════════════════════════════
+   FLASH
+════════════════════════════════════════ */
+function flashScreen(){
+  const f = document.getElementById("flash");
+  f.style.transition="none"; f.style.opacity="0.9";
+  requestAnimationFrame(()=>{ f.style.transition="opacity 0.4s"; f.style.opacity="0"; });
+}
+
+/* ════════════════════════════════════════
+   UTILS
+════════════════════════════════════════ */
+function nowString(){
+  const d=new Date(), p=n=>String(n).padStart(2,"0");
+  return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+}
+function downloadBlob(blob,name){
+  const u=URL.createObjectURL(blob), a=document.createElement("a");
+  a.href=u; a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(u),3000);
+}
+async function captureComposite(){
+  return new Promise(resolve=>{
+    const comp=document.createElement("canvas");
+    comp.width=window.innerWidth; comp.height=window.innerHeight;
+    const c=comp.getContext("2d");
+    if(video.readyState>=2){
+      const vw=video.videoWidth,vh=video.videoHeight;
+      const sc=Math.max(comp.width/vw,comp.height/vh);
+      c.drawImage(video,(comp.width-vw*sc)/2,(comp.height-vh*sc)/2,vw*sc,vh*sc);
+    }
+    c.drawImage(canvas,0,0);
+    comp.toBlob(b=>resolve(b),"image/png");
+  });
+}
+
+/* ════════════════════════════════════════
+   SCREENSHOT
+════════════════════════════════════════ */
+document.getElementById("ss-btn").addEventListener("click", async()=>{
+  const blob = await captureComposite();
+  downloadBlob(blob,"ss_"+nowString()+".png");
+  log("screenshot saved","#ffdd55");
+});
+
+/* ════════════════════════════════════════
+   RECORDING  (button toggle only)
+════════════════════════════════════════ */
+const recBtn = document.getElementById("rec-btn");
+let isRecording=false, mediaRecorder, chunks=[], recCanvas, recCtx, recRAF;
+
+function drawRec(){
+  if(!isRecording) return;
+  if(video.readyState>=2){
+    const vw=video.videoWidth,vh=video.videoHeight;
+    const sc=Math.max(recCanvas.width/vw,recCanvas.height/vh);
+    recCtx.drawImage(video,(recCanvas.width-vw*sc)/2,(recCanvas.height-vh*sc)/2,vw*sc,vh*sc);
+  }
+  recCtx.drawImage(canvas,0,0);
+  recRAF=requestAnimationFrame(drawRec);
+}
+
+async function startRecording(){
+  recCanvas=document.createElement("canvas");
+  recCanvas.width=window.innerWidth; recCanvas.height=window.innerHeight;
+  recCtx=recCanvas.getContext("2d");
+
+  let audioTracks=[];
+  try{
+    const mic=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    audioTracks=mic.getAudioTracks();
+    log("mic OK","#afffcc");
+  }catch(e){ log("mic off: "+e.message,"#ffaa44"); }
+
+  const stream=recCanvas.captureStream(30);
+  audioTracks.forEach(t=>stream.addTrack(t));
+
+  const mimes=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm","video/mp4"];
+  const mime=mimes.find(m=>MediaRecorder.isTypeSupported(m))||"";
+  mediaRecorder=new MediaRecorder(stream, mime?{mimeType:mime}:{});
+  chunks=[];
+  mediaRecorder.ondataavailable=e=>{ if(e.data?.size>0) chunks.push(e.data); };
+  mediaRecorder.onstop=()=>{
+    const ext=mime.includes("mp4")?"mp4":"webm";
+    const blob=new Blob(chunks,{type:mime||"video/webm"});
+    downloadBlob(blob,"video_"+nowString()+"."+ext);
+    log("record saved ("+Math.round(blob.size/1024)+" KB)","#ffdd55");
+  };
+  isRecording=true;
+  recBtn.classList.add("recording");
+  mediaRecorder.start(200);
+  drawRec();
+  log("record start","#ff6666");
+}
+
+function stopRecording(){
+  isRecording=false;
+  cancelAnimationFrame(recRAF);
+  if(mediaRecorder?.state!=="inactive") mediaRecorder.stop();
+  recBtn.classList.remove("recording");
+  log("record stop","#88ffcc");
+}
+
+recBtn.addEventListener("click",()=>{ isRecording?stopRecording():startRecording(); });
+
+/* ════════════════════════════════════════
+   FULLSCREEN
+════════════════════════════════════════ */
+document.getElementById("full-btn").addEventListener("click",()=>{
+  document.fullscreenElement ? document.exitFullscreen()
+    : document.documentElement.requestFullscreen().catch(e=>log("FS: "+e.message,"#ff5555"));
+});
+</script>
+</body>
+</html>
