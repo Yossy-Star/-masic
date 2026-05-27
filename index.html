@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>MusicAR</title>
+ 
+  <!-- A-Frame -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <!-- MindAR -->
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+ 
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+ 
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Courier New', monospace;
+    }
+ 
+    video {
+      position: fixed !important;
+      top: 0 !important; left: 0 !important;
+      width: 100vw !important; height: 100vh !important;
+      object-fit: cover !important;
+      z-index: 0 !important;
+    }
+ 
+    a-scene {
+      position: fixed !important;
+      top: 0; left: 0;
+      width: 100vw !important; height: 100vh !important;
+      z-index: 1;
+    }
+    a-scene canvas { background: transparent !important; }
+ 
+    /* ─── パスワード画面 ─── */
+    #pw-screen {
+      position: fixed; inset: 0; z-index: 50000;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 20px;
+      background: #0a0a0a;
+    }
+    #pw-screen h1 {
+      font-size: clamp(22px, 6vw, 36px);
+      letter-spacing: 0.25em;
+      color: #e8e0cc;
+      text-transform: uppercase;
+    }
+    #pw-screen p {
+      font-size: 12px;
+      color: #555;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+    }
+    #pw-input {
+      width: min(300px, 80vw);
+      padding: 14px 18px;
+      background: transparent;
+      border: 1px solid #333;
+      border-bottom: 1px solid #888;
+      color: #e8e0cc;
+      font-family: 'Courier New', monospace;
+      font-size: 18px;
+      letter-spacing: 0.2em;
+      outline: none;
+      text-align: center;
+      caret-color: #e8e0cc;
+    }
+    #pw-input::placeholder { color: #444; letter-spacing: 0.1em; }
+    #pw-input:focus { border-bottom-color: #c8b86e; }
+    #pw-btn {
+      width: min(300px, 80vw);
+      padding: 14px;
+      background: transparent;
+      border: 1px solid #555;
+      color: #e8e0cc;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    #pw-btn:hover { border-color: #c8b86e; color: #c8b86e; }
+    #pw-error {
+      font-size: 11px;
+      color: #c0504d;
+      letter-spacing: 0.1em;
+      min-height: 16px;
+    }
+ 
+    /* ─── 送信フラッシュ ─── */
+    #send-flash {
+      display: none;
+      position: fixed; inset: 0; z-index: 40000;
+      align-items: center; justify-content: center;
+      pointer-events: none;
+      background: rgba(0,0,0,0.45);
+    }
+    #send-flash.active { display: flex; animation: flash-fade 1.2s ease-out forwards; }
+    #send-flash-inner {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 12px;
+    }
+    #send-flash-icon {
+      font-size: clamp(48px, 18vw, 90px);
+      line-height: 1;
+      filter: drop-shadow(0 0 18px rgba(200,184,110,0.7));
+    }
+    #send-flash-label {
+      font-size: clamp(11px, 3vw, 15px);
+      letter-spacing: 0.4em;
+      color: #c8b86e;
+      text-transform: uppercase;
+    }
+    @keyframes flash-fade {
+      0%   { opacity: 0; }
+      15%  { opacity: 1; }
+      70%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+ 
+    /* ─── ステータスバー ─── */
+    #status-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      z-index: 9000;
+      display: flex; align-items: center; justify-content: center;
+      padding: 8px 16px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(6px);
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      color: #666;
+      text-transform: uppercase;
+      gap: 12px;
+      pointer-events: none;
+    }
+    #status-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: #333;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    #status-dot.found   { background: #c8b86e; box-shadow: 0 0 6px #c8b86e; }
+    #status-dot.sending { background: #6eb8c8; box-shadow: 0 0 6px #6eb8c8; }
+    #status-dot.sent    { background: #6ec88a; box-shadow: 0 0 6px #6ec88a; }
+    #status-dot.error   { background: #c86e6e; box-shadow: 0 0 6px #c86e6e; }
+ 
+    /* ─── ログ ─── */
+    #log {
+      position: fixed; bottom: 36px; left: 0;
+      width: 100%; max-height: 28vh;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.6);
+      color: #00ff88;
+      font-family: monospace; font-size: 11px;
+      padding: 6px 10px;
+      z-index: 8000;
+      pointer-events: none;
+    }
+ 
+    /* ─── UI ボタン ─── */
+    .ctrl-btn {
+      position: fixed; z-index: 10000;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 8px;
+      width: 46px; height: 46px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 20px; cursor: pointer; user-select: none;
+      transition: background 0.15s;
+    }
+    .ctrl-btn:active  { background: rgba(255,255,255,0.15); }
+    .ctrl-btn:disabled { opacity: 0.4; cursor: default; }
+ 
+    #ss-btn   { left: 10px; bottom: 44px; }
+    #rec-btn  { left: 66px; bottom: 44px; gap: 2px; }
+    #full-btn { right: 10px; top: 10px; }
+    #log-clear {
+      position: fixed; right: 10px; top: 66px; z-index: 10000;
+      background: rgba(0,0,0,0.55); color: #aaa;
+      border: 1px solid #444; border-radius: 4px;
+      padding: 5px 10px; font-size: 11px; cursor: pointer;
+    }
+ 
+    #mic-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; font-size: 9px; border-radius: 50%;
+    }
+    #mic-badge.on  { background: rgba(0,200,100,0.35); color: #affcc0; }
+    #mic-badge.off { background: rgba(255,80,80,0.3);  color: #ffaaaa; }
+ 
+    #rec-btn.recording {
+      background: rgba(160,0,0,0.7); border-color: #ff4444;
+      animation: rec-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes rec-pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.65; }
+    }
+ 
+    /* ─── カウントダウン ─── */
+    #countdown-overlay {
+      display: none; position: fixed; inset: 0;
+      z-index: 20000; align-items: center; justify-content: center;
+      background: transparent; pointer-events: none;
+    }
+    #countdown-overlay.active { display: flex; }
+    #countdown-num {
+      font-size: clamp(80px, 25vw, 160px);
+      font-family: monospace; font-weight: 900;
+      color: #fff;
+      text-shadow: 0 0 20px rgba(0,0,0,0.8), 0 2px 6px rgba(0,0,0,0.9);
+      animation: pop 0.4s ease-out;
+    }
+    @keyframes pop {
+      0%  { transform: scale(1.6); opacity: 0; }
+      60% { transform: scale(0.95); opacity: 1; }
+      100%{ transform: scale(1); opacity: 1; }
+    }
+ 
+    #ss-flash {
+      display: none; position: fixed; inset: 0;
+      z-index: 30000; background: #fff; pointer-events: none;
+    }
+    #ss-flash.active { display: block; animation: flash-anim 0.35s ease-out forwards; }
+    @keyframes flash-anim { 0% { opacity: 1; } 100% { opacity: 0; } }
+ 
+    #rec-hint {
+      display: none; position: fixed; top: 18px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 10000;
+      background: rgba(160,0,0,0.7); color: #fff;
+      font-family: monospace; font-size: 13px;
+      padding: 7px 16px; border-radius: 20px;
+      border: 1px solid rgba(255,100,100,0.5);
+      pointer-events: none; white-space: nowrap;
+    }
+    #rec-hint.active { display: block; }
+  </style>
+</head>
+<body>
+ 
+<!-- ─── パスワード画面 ─── -->
+<div id="pw-screen">
+  <h1>MusicAR</h1>
+  <p>Enter password to continue</p>
+  <input type="password" id="pw-input" placeholder="••••••••" autocomplete="current-password">
+  <button id="pw-btn">Enter</button>
+  <div id="pw-error"></div>
+</div>
+ 
+<!-- ─── 送信フラッシュ ─── -->
+<div id="send-flash">
+  <div id="send-flash-inner">
+    <div id="send-flash-icon">♪</div>
+    <div id="send-flash-label">Sending…</div>
+  </div>
+</div>
+ 
+<!-- ─── ステータスバー ─── -->
+<div id="status-bar">
+  <div id="status-dot"></div>
+  <span id="status-text">Waiting for target</span>
+</div>
+ 
+<!-- ─── ログ ─── -->
+<div id="log"></div>
+ 
+<!-- ─── UI ボタン ─── -->
+<button id="log-clear" class="ctrl-btn" style="width:auto;height:auto;">clear</button>
+<button id="full-btn" class="ctrl-btn">⛶</button>
+<button id="ss-btn"   class="ctrl-btn">📷</button>
+<button id="rec-btn"  class="ctrl-btn">🎥<span id="mic-badge" class="off">🎙</span></button>
+ 
+<!-- カウントダウン -->
+<div id="countdown-overlay"><div id="countdown-num">3</div></div>
+<!-- SSフラッシュ -->
+<div id="ss-flash"></div>
+<!-- 録画ヒント -->
+<div id="rec-hint">⏹ タップして録画停止</div>
+ 
+ 
+<!-- ─── A-Frame シーン ─── -->
+<!--
+  対応関係:
+    target0: image (1).webp → music1 (左),  image (2).webp → music2 (右)
+    target1: image (3).webp → music3 (左),  image (4).webp → music4 (右)
+    target2: image (5).webp → music5 (左),  image (6).webp → music6 (右)
+    target3: image (7).webp → music7 (左),  image (8).webp → music8 (右)
+ 
+  各targetに2枚の画像と2つの音符ボタンを配置。
+  画像は左右 (x: -0.4 / +0.4) に並べ、音符ボタンも同じ左右に対応。
+-->
+<a-scene
+  color-space="sRGB"
+  vr-mode-ui="enabled: false"
+  device-orientation-permission-ui="enabled: false"
+  renderer="logarithmicDepthBuffer: true; antialias: true; alpha: true; preserveDrawingBuffer: true;"
+  mindar-image="
+    imageTargetSrc: ./targets.mind;
+    autoStart: true;
+    uiLoading: true;
+    uiScanning: true;
+    uiError: true;
+    filterMinCF: 0.1;
+    filterBeta: 10;
+    missTolerance: 5;
+    warmupTolerance: 3;
+    maxTrack: 1;
+  "
+  embedded>
+ 
+  <a-assets>
+    <!-- target0 の2枚 -->
+    <img id="img0a" src="./image (1).webp" crossorigin="anonymous">
+    <img id="img0b" src="./image (2).webp" crossorigin="anonymous">
+    <!-- target1 の2枚 -->
+    <img id="img1a" src="./image (3).webp" crossorigin="anonymous">
+    <img id="img1b" src="./image (4).webp" crossorigin="anonymous">
+    <!-- target2 の2枚 -->
+    <img id="img2a" src="./image (5).webp" crossorigin="anonymous">
+    <img id="img2b" src="./image (6).webp" crossorigin="anonymous">
+    <!-- target3 の2枚 -->
+    <img id="img3a" src="./image (7).webp" crossorigin="anonymous">
+    <img id="img3b" src="./image (8).webp" crossorigin="anonymous">
+  </a-assets>
+ 
+  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+ 
+  <!-- =============================================
+       target 0 → music1 (左画像) / music2 (右画像)
+       ============================================= -->
+  <a-entity id="target0" mindar-image-target="targetIndex: 0" smooth-transform="alpha: 0.4">
+ 
+    <!-- 左: image (1).webp -->
+    <a-plane src="#img0a" width="0.65" height="0.65" position="-0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 左: music1 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music1"
+      position="-0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: -0.4 0.04 0.08; to: -0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+    <!-- 右: image (2).webp -->
+    <a-plane src="#img0b" width="0.65" height="0.65" position="0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 右: music2 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music2"
+      position="0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: 0.4 0.04 0.08; to: 0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+  </a-entity>
+ 
+  <!-- =============================================
+       target 1 → music3 (左画像) / music4 (右画像)
+       ============================================= -->
+  <a-entity id="target1" mindar-image-target="targetIndex: 1" smooth-transform="alpha: 0.4">
+ 
+    <!-- 左: image (3).webp -->
+    <a-plane src="#img1a" width="0.65" height="0.65" position="-0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 左: music3 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music3"
+      position="-0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: -0.4 0.04 0.08; to: -0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+    <!-- 右: image (4).webp -->
+    <a-plane src="#img1b" width="0.65" height="0.65" position="0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 右: music4 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music4"
+      position="0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: 0.4 0.04 0.08; to: 0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+  </a-entity>
+ 
+  <!-- =============================================
+       target 2 → music5 (左画像) / music6 (右画像)
+       ============================================= -->
+  <a-entity id="target2" mindar-image-target="targetIndex: 2" smooth-transform="alpha: 0.4">
+ 
+    <!-- 左: image (5).webp -->
+    <a-plane src="#img2a" width="0.65" height="0.65" position="-0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 左: music5 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music5"
+      position="-0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: -0.4 0.04 0.08; to: -0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+    <!-- 右: image (6).webp -->
+    <a-plane src="#img2b" width="0.65" height="0.65" position="0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 右: music6 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music6"
+      position="0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: 0.4 0.04 0.08; to: 0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+  </a-entity>
+ 
+  <!-- =============================================
+       target 3 → music7 (左画像) / music8 (右画像)
+       ============================================= -->
+  <a-entity id="target3" mindar-image-target="targetIndex: 3" smooth-transform="alpha: 0.4">
+ 
+    <!-- 左: image (7).webp -->
+    <a-plane src="#img3a" width="0.65" height="0.65" position="-0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 左: music7 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music7"
+      position="-0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: -0.4 0.04 0.08; to: -0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+    <!-- 右: image (8).webp -->
+    <a-plane src="#img3b" width="0.65" height="0.65" position="0.4 0 0.001" side="double"
+      material="shader: flat; transparent: true; alphaTest: 0.5;"
+      raycaster-listen="false">
+    </a-plane>
+    <!-- 右: music8 音符ボタン -->
+    <a-entity class="music-note-btn" music-tap="music: music8"
+      position="0.4 0 0.08"
+      animation__idle="property: rotation; to: 0 360 0; loop: true; dur: 4000; easing: linear"
+      animation__bob="property: position; from: 0.4 0.04 0.08; to: 0.4 -0.04 0.08; dir: alternate; loop: true; dur: 1200; easing: easeInOutSine">
+      <a-sphere radius="0.07" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.6; metalness: 0.3; roughness: 0.4; shader: standard;" position="0 0 0"></a-sphere>
+      <a-cylinder radius="0.012" height="0.18" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.068 0.09 0"></a-cylinder>
+      <a-box width="0.09" height="0.012" depth="0.012" material="color: #FFD700; emissive: #FFA500; emissiveIntensity: 0.5; shader: standard;" position="0.113 0.18 0"></a-box>
+      <a-sphere radius="0.095" material="color: #FFD700; opacity: 0.15; transparent: true; shader: flat; side: back;"></a-sphere>
+    </a-entity>
+ 
+  </a-entity>
+ 
+</a-scene>
+ 
+ 
+<!-- ─── Firebase + ロジック ─── -->
+<script type="module">
+ 
+import { initializeApp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInAnonymously }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getDatabase, ref, set }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+ 
+/* ─── Firebase ─── */
+const firebaseConfig = {
+  apiKey: "AIzaSyCCXS7VkDZywh84EtS3AtTUfdvOmdKEyaM",
+  authDomain: "musicar-c18e9.firebaseapp.com",
+  databaseURL: "https://musicar-c18e9-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "musicar-c18e9",
+  storageBucket: "musicar-c18e9.firebasestorage.app",
+  messagingSenderId: "546300872409",
+  appId: "1:546300872409:web:53b357be74d3e5a136e0c8"
+};
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getDatabase(app);
+ 
+/* ─── グローバル状態 ─── */
+window._musicAR = {
+  passwordHash: null,
+  currentMusic: null,
+  sending: false
+};
+ 
+/* ─── ユーティリティ ─── */
+async function sha256(msg) {
+  const buf  = new TextEncoder().encode(msg);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+ 
+const logEl = document.getElementById('log');
+function log(msg, color) {
+  const t = new Date().toTimeString().slice(0, 8);
+  const d = document.createElement('div');
+  d.style.color = color || '#00ff88';
+  d.textContent = '[' + t + '] ' + msg;
+  logEl.appendChild(d);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+ 
+function setStatus(mode, text) {
+  document.getElementById('status-dot').className  = mode;
+  document.getElementById('status-text').textContent = text;
+}
+ 
+/* ─── 送信フラッシュ表示 ─── */
+function showSendFlash(musicLabel, success) {
+  const el    = document.getElementById('send-flash');
+  const icon  = document.getElementById('send-flash-icon');
+  const label = document.getElementById('send-flash-label');
+  icon.textContent  = success ? '♪' : '✕';
+  label.textContent = success ? musicLabel + ' sent' : 'Send failed';
+  el.classList.remove('active');
+  void el.offsetWidth;
+  el.classList.add('active');
+  el.addEventListener('animationend', () => el.classList.remove('active'), { once: true });
+}
+ 
+/* ─── Firebase送信 ─── */
+async function sendToFirebase(music) {
+  if (window._musicAR.sending) return;
+  if (!window._musicAR.passwordHash) { log('No password hash', '#ff5555'); return; }
+  window._musicAR.sending = true;
+  setStatus('sending', 'Sending ' + music + '…');
+  try {
+    await signInAnonymously(auth);
+    await set(ref(db, 'main'), {
+      command:      music,
+      passwordHash: window._musicAR.passwordHash,
+      timestamp:    Date.now()
+    });
+    log('Sent: ' + music, '#ffdd55');
+    setStatus('sent', music + ' sent');
+    showSendFlash(music, true);
+  } catch (err) {
+    log('Send error: ' + err.message, '#ff5555');
+    setStatus('error', 'Error');
+    showSendFlash(music, false);
+  }
+  window._musicAR.sending = false;
+}
+ 
+/* ─── パスワード画面 ─── */
+const pwScreen = document.getElementById('pw-screen');
+const pwInput  = document.getElementById('pw-input');
+const pwBtn    = document.getElementById('pw-btn');
+const pwError  = document.getElementById('pw-error');
+ 
+async function submitPassword() {
+  const val = pwInput.value.trim();
+  if (!val) { pwError.textContent = 'パスワードを入力してください'; return; }
+  pwBtn.textContent = '…';
+  pwBtn.disabled = true;
+  window._musicAR.passwordHash = await sha256(val);
+  log('Password set (hash: ' + window._musicAR.passwordHash.slice(0, 8) + '…)');
+  pwScreen.style.display = 'none';
+  setStatus('', 'Waiting for target');
+}
+ 
+pwBtn.addEventListener('click', submitPassword);
+pwInput.addEventListener('keydown', e => { if (e.key === 'Enter') submitPassword(); });
+ 
+/* ─── A-Frame コンポーネント ─── */
+ 
+/* smooth-transform */
+AFRAME.registerComponent('smooth-transform', {
+  schema: { alpha: { type: 'number', default: 0.4 } },
+  init() {
+    this.smoothPos   = new THREE.Vector3();
+    this.smoothQuat  = new THREE.Quaternion();
+    this.smoothScale = new THREE.Vector3(1,1,1);
+    this.targetPos   = new THREE.Vector3();
+    this.targetQuat  = new THREE.Quaternion();
+    this.targetScale = new THREE.Vector3(1,1,1);
+    this.isVisible   = false;
+    this.el.addEventListener('targetFound', () => { this.isVisible = true;  this.firstFrame = true; });
+    this.el.addEventListener('targetLost',  () => { this.isVisible = false; });
+  },
+  tick() {
+    if (!this.isVisible) return;
+    const obj = this.el.object3D;
+    this.targetPos.copy(obj.position);
+    this.targetQuat.copy(obj.quaternion);
+    this.targetScale.copy(obj.scale);
+    if (this.firstFrame) {
+      this.smoothPos.copy(this.targetPos);
+      this.smoothQuat.copy(this.targetQuat);
+      this.smoothScale.copy(this.targetScale);
+      this.firstFrame = false; return;
+    }
+    const a = this.data.alpha;
+    this.smoothPos.lerp(this.targetPos, a);
+    this.smoothQuat.slerp(this.targetQuat, a);
+    this.smoothScale.lerp(this.targetScale, a);
+    obj.position.copy(this.smoothPos);
+    obj.quaternion.copy(this.smoothQuat);
+    obj.scale.copy(this.smoothScale);
+  }
+});
+ 
+/*
+ * music-tap:
+ *   - ターゲットの parentEl (mindar-image-target entity) の
+ *     targetFound / targetLost イベントを監視して currentMusic を更新
+ *   - この entity 自身（音符グループ）への click でFirebase送信
+ *   - タップ時にスケールアニメで視覚フィードバック
+ */
+AFRAME.registerComponent('music-tap', {
+  schema: { music: { type: 'string', default: '' } },
+  init() {
+    const music        = this.data.music;
+    const noteEntity   = this.el;          // 音符グループ entity
+    const parentTarget = this.el.parentEl; // mindar-image-target entity
+ 
+    /* ターゲット検出・消失 */
+    parentTarget.addEventListener('targetFound', () => {
+      // 同じtarget上に複数の音符があるので、currentMusicはタップ時に決定する
+      setStatus('found', 'Target found — tap ♪ to send');
+      log('Target found (contains: ' + music + ')', '#ffdd55');
+    });
+    parentTarget.addEventListener('targetLost', () => {
+      setStatus('', 'Waiting for target');
+      log('Target lost', '#aaaaaa');
+    });
+ 
+    /* 音符をタップ → Firebase送信 + スケールバウンス */
+    noteEntity.addEventListener('click', () => {
+      log('Note tapped: ' + music, '#88ccff');
+ 
+      /* タップ視覚フィードバック：スケールをバウンス */
+      noteEntity.setAttribute('animation__tap',
+        'property: scale; from: 1.4 1.4 1.4; to: 1 1 1; dur: 300; easing: easeOutElastic; startEvents: tap-bounce');
+      noteEntity.emit('tap-bounce');
+ 
+      sendToFirebase(music);
+    });
+ 
+    /* raycaster が子要素にも当たるよう再帰的に有効化 */
+    noteEntity.setAttribute('class', 'clickable');
+    noteEntity.querySelectorAll('*').forEach(child => {
+      child.setAttribute('class', 'clickable');
+    });
+  }
+});
+ 
+/* ─── カーソル（レイキャスター）のセットアップ ─── */
+const scene = document.querySelector('a-scene');
+scene.addEventListener('loaded', () => {
+  log('scene loaded');
+ 
+  const r = scene.renderer;
+  if (r) { r.setClearColor(0x000000, 0); r.setClearAlpha(0); }
+  const canvas = scene.querySelector('canvas');
+  if (canvas) canvas.style.background = 'transparent';
+ 
+  /* カメラエンティティにカーソルを追加 */
+  const camEl = scene.querySelector('a-camera');
+  if (camEl && !camEl.getAttribute('cursor')) {
+    camEl.setAttribute('cursor',
+      'rayOrigin: mouse; fuse: false;');
+    camEl.setAttribute('raycaster',
+      'objects: .clickable; far: 100;');
+  }
+});
+ 
+scene.addEventListener('arReady', () => {
+  log('AR READY', '#88ccff');
+  const r = scene.renderer;
+  if (r) { r.setClearColor(0x000000, 0); r.setClearAlpha(0); }
+});
+scene.addEventListener('arError', () => log('AR ERROR', '#ff5555'));
+ 
+/* targets.mind check */
+fetch('./targets.mind')
+  .then(r => log('targets.mind ' + (r.ok ? 'OK' : 'ERROR ' + r.status), r.ok ? '#00ff88' : '#ff5555'))
+  .catch(() => log('targets.mind fetch failed', '#ff5555'));
+ 
+window.onerror = (msg, url, line) => log('JS ERROR: ' + msg + ' line:' + line, '#ff5555');
+ 
+/* ─── log clear ─── */
+document.getElementById('log-clear').addEventListener('click', () => { logEl.innerHTML = ''; });
+ 
+/* ─── UI visibility helper ─── */
+const UI_SEL = ['#log', '#log-clear', '#ss-btn', '#rec-btn', '#full-btn', '#status-bar'];
+function setUIVisible(v) {
+  UI_SEL.forEach(s => {
+    const el = document.querySelector(s);
+    if (el) el.style.visibility = v ? 'visible' : 'hidden';
+  });
+}
+ 
+/* ─── カウントダウン ─── */
+const countdownOverlay = document.getElementById('countdown-overlay');
+const countdownNum     = document.getElementById('countdown-num');
+const ssFlash          = document.getElementById('ss-flash');
+const recHint          = document.getElementById('rec-hint');
+ 
+function countdown(sec) {
+  return new Promise(resolve => {
+    countdownNum.textContent = sec;
+    countdownOverlay.classList.add('active');
+    let rem = sec;
+    const tick = () => {
+      rem--;
+      if (rem <= 0) { countdownOverlay.classList.remove('active'); resolve(); return; }
+      countdownNum.textContent = rem;
+      countdownNum.style.animation = 'none';
+      void countdownNum.offsetWidth;
+      countdownNum.style.animation = '';
+      setTimeout(tick, 1000);
+    };
+    setTimeout(tick, 1000);
+  });
+}
+ 
+function doFlash() {
+  return new Promise(resolve => {
+    ssFlash.classList.remove('active');
+    void ssFlash.offsetWidth;
+    ssFlash.classList.add('active');
+    ssFlash.addEventListener('animationend', () => { ssFlash.classList.remove('active'); resolve(); }, { once: true });
+  });
+}
+ 
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a   = Object.assign(document.createElement('a'), { href: url, download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+}
+ 
+function nowString() {
+  const n = new Date(), p = x => String(x).padStart(2, '0');
+  return n.getFullYear() + p(n.getMonth()+1) + p(n.getDate()) + '_' + p(n.getHours()) + p(n.getMinutes()) + p(n.getSeconds());
+}
+ 
+/* ─── スクリーンショット ─── */
+function captureOnNextRender() {
+  return new Promise((resolve, reject) => {
+    const sceneEl  = document.querySelector('a-scene');
+    const renderer = sceneEl && sceneEl.renderer;
+    if (!renderer) { reject(new Error('renderer not ready')); return; }
+    const orig = renderer.render.bind(renderer);
+    renderer.render = function(s, c) {
+      orig(s, c);
+      renderer.render = orig;
+      try {
+        const W = window.innerWidth, H = window.innerHeight;
+        const comp = Object.assign(document.createElement('canvas'), { width: W, height: H });
+        const ctx  = comp.getContext('2d');
+        const vid  = document.querySelector('video');
+        if (vid && vid.readyState >= 2) {
+          const sc = Math.max(W/vid.videoWidth, H/vid.videoHeight);
+          ctx.drawImage(vid, (W-vid.videoWidth*sc)/2, (H-vid.videoHeight*sc)/2, vid.videoWidth*sc, vid.videoHeight*sc);
+        }
+        ctx.drawImage(renderer.domElement, 0, 0, W, H);
+        comp.toBlob(blob => blob ? resolve(blob) : reject(new Error('toBlob null')), 'image/png');
+      } catch(e) { reject(e); }
+    };
+  });
+}
+ 
+const ssBtn = document.getElementById('ss-btn');
+ssBtn.addEventListener('click', async () => {
+  ssBtn.disabled = true;
+  setUIVisible(false);
+  await countdown(3);
+  try {
+    const [blob] = await Promise.all([captureOnNextRender(), doFlash()]);
+    downloadBlob(blob, 'screenshot_' + nowString() + '.png');
+    log('SS saved', '#ffdd55');
+  } catch(e) { log('SS failed: ' + e.message, '#ff5555'); }
+  setUIVisible(true);
+  ssBtn.disabled = false;
+});
+ 
+/* ─── 録画 ─── */
+const recBtn   = document.getElementById('rec-btn');
+const micBadge = document.getElementById('mic-badge');
+let isRecording = false, mediaRecorder = null, recordedChunks = [];
+let compositeCanvas = null, compositeCtx = null, rafId = null, micStream = null;
+ 
+function drawFrame() {
+  if (!isRecording) return;
+  const W = compositeCanvas.width, H = compositeCanvas.height;
+  const sceneEl  = document.querySelector('a-scene');
+  const renderer = sceneEl && sceneEl.renderer;
+  compositeCtx.clearRect(0, 0, W, H);
+  const vid = document.querySelector('video');
+  if (vid && vid.readyState >= 2) {
+    const sc = Math.max(W/vid.videoWidth, H/vid.videoHeight);
+    compositeCtx.drawImage(vid, (W-vid.videoWidth*sc)/2, (H-vid.videoHeight*sc)/2, vid.videoWidth*sc, vid.videoHeight*sc);
+  }
+  if (renderer) compositeCtx.drawImage(renderer.domElement, 0, 0, W, H);
+  rafId = requestAnimationFrame(drawFrame);
+}
+ 
+function stopRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+  document.removeEventListener('touchstart', stopOnTap, { capture: true });
+  document.removeEventListener('mousedown',  stopOnTap, { capture: true });
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  recHint.classList.remove('active');
+  recBtn.classList.remove('recording');
+  recBtn.disabled = false;
+  setUIVisible(true);
+}
+function stopOnTap() { stopRecording(); }
+ 
+async function startRecording() {
+  if (isRecording) return;
+  recBtn.disabled = true;
+  setUIVisible(false);
+  await countdown(3);
+  let audioTracks = [];
+  try {
+    micStream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    audioTracks = micStream.getAudioTracks();
+    log('Mic OK: ' + (audioTracks[0]?.label || 'unknown'), '#afffcc');
+  } catch(e) {
+    log('Mic unavailable: ' + e.message, '#ffaa44');
+    micStream = null;
+  }
+  const W = window.innerWidth, H = window.innerHeight;
+  compositeCanvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  compositeCtx = compositeCanvas.getContext('2d');
+  const fps = 30, videoStream = compositeCanvas.captureStream(fps);
+  audioTracks.forEach(t => videoStream.addTrack(t));
+  micBadge.textContent = audioTracks.length ? '🎙 ON' : '🎙 OFF';
+  micBadge.className   = audioTracks.length ? 'on' : 'off';
+  const mimes = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
+  const mimeType = mimes.find(m => MediaRecorder.isTypeSupported(m)) || '';
+  try {
+    mediaRecorder = new MediaRecorder(videoStream, mimeType ? { mimeType } : {});
+  } catch(e) {
+    log('MediaRecorder init failed: ' + e.message, '#ff5555');
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    setUIVisible(true); recBtn.disabled = false; return;
+  }
+  recordedChunks = [];
+  mediaRecorder.ondataavailable = e => { if (e.data?.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = () => {
+    const ext  = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(recordedChunks, { type: mimeType || 'video/webm' });
+    const name = 'video_' + nowString() + '.' + ext;
+    downloadBlob(blob, name);
+    log('REC saved: ' + name + ' (' + (blob.size/1024).toFixed(1) + 'KB)', '#ffdd55');
+    recordedChunks = [];
+  };
+  mediaRecorder.onerror = e => { log('REC error: ' + e.error, '#ff5555'); stopRecording(); };
+  isRecording = true;
+  mediaRecorder.start(200);
+  drawFrame();
+  recBtn.classList.add('recording');
+  recBtn.disabled = false;
+  recHint.classList.add('active');
+  log('REC started ' + W + '×' + H + ' @' + fps + 'fps audio=' + (audioTracks.length > 0), '#ff8844');
+  setTimeout(() => {
+    document.addEventListener('touchstart', stopOnTap, { capture: true });
+    document.addEventListener('mousedown',  stopOnTap, { capture: true });
+  }, 300);
+}
+ 
+recBtn.addEventListener('click', () => isRecording ? stopRecording() : startRecording());
+ 
+/* ─── 全画面 ─── */
+const fullBtn = document.getElementById('full-btn');
+const isFS = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+fullBtn.addEventListener('click', () => {
+  if (isFS()) {
+    (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document)
+      .catch(e => log('FS exit failed: ' + e.message, '#ff5555'));
+  } else {
+    const el = document.documentElement;
+    (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el)
+      .catch(e => log('FS enter failed: ' + e.message, '#ff5555'));
+  }
+});
+['fullscreenchange','webkitfullscreenchange'].forEach(ev =>
+  document.addEventListener(ev, () => log('FS: ' + (isFS() ? 'entered' : 'exited'), '#88ccff'))
+);
+ 
+</script>
+</body>
+</html>
